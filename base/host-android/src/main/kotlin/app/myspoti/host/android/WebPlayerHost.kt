@@ -94,6 +94,8 @@ class WebPlayerHost(private val context: Context) : BridgeHost {
      */
     internal val fingerprint = Fingerprint.of(context)
     val userAgent: String get() = fingerprint.userAgent
+    /** Account pages need the real Android WebView identity; the player needs desktop Chrome. */
+    private val accountUserAgent by lazy { WebSettings.getDefaultUserAgent(context) }
 
     init {
         // Debug builds only: lets desktop tools (chrome://inspect, CDP) look at the page.
@@ -211,6 +213,9 @@ class WebPlayerHost(private val context: Context) : BridgeHost {
 
             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
                 Logbook.log("page start ${url.take(120)}")
+                // Keep Spotify account/signup controls in their responsive Android form. Google
+                // may still reject embedded WebViews by policy; this does not bypass that rule.
+                view.settings.userAgentString = if (isAccountPage(url)) accountUserAgent else fingerprint.userAgent
                 mainFrameFailed = false
                 // A load that never ends (measured: a reload's document request answered nothing
                 // for 9 minutes, the page stayed "loading", empty, without the bridge).
@@ -426,7 +431,11 @@ class WebPlayerHost(private val context: Context) : BridgeHost {
         main.postDelayed(retryPlayerPage, wait)
     }
 
-    fun openLogin() = main.post { view.alpha = 1f; view.loadUrl(LOGIN_URL) }
+    fun openLogin() = main.post {
+        view.alpha = 1f
+        view.settings.userAgentString = accountUserAgent
+        view.loadUrl(LOGIN_URL)
+    }
 
     /** Signs out of Spotify in this WebView, then shows the login page. */
     fun logout() = main.post {
@@ -535,6 +544,14 @@ class WebPlayerHost(private val context: Context) : BridgeHost {
         private const val REBUILD_WATCH_MS = 1_500L
         private const val LOAD_RETRIES = 4
         const val LOGIN_URL = "https://accounts.spotify.com/login?continue=https%3A%2F%2Fopen.spotify.com%2F"
+    }
+
+    private fun isAccountPage(url: String): Boolean {
+        val host = android.net.Uri.parse(url).host.orEmpty()
+        return host == "accounts.spotify.com" || host.endsWith(".accounts.spotify.com") ||
+            host == "accounts.google.com" || host.endsWith(".google.com") ||
+            host == "facebook.com" || host.endsWith(".facebook.com") ||
+            host == "appleid.apple.com"
     }
 }
 
