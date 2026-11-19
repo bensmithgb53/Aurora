@@ -85,7 +85,7 @@
     <string name="ad_playing">Advertisement</string>
     <string name="track_unavailable_region">Not available in your region</string>
     <string name="diagnostic_export_title">Export a diagnostic report</string>
-    <string name="diagnostic_export_detail">Shares the app\'s recent log and device details</string>
+    <string name="diagnostic_export_detail">Saves a copy of the recent log to your phone</string>
     <string name="diagnostic_export_failed">Could not write the diagnostic report</string>
     <string name="local_playlist_subtitle">On this device</string>
     <string name="local_playlist_new">Playlist on this device</string>

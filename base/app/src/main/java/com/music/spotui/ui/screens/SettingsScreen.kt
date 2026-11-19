@@ -1,5 +1,7 @@
 package com.music.spotui.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
@@ -59,6 +61,23 @@ import com.music.spotui.ui.theme.AppBackground
 fun SettingsScreen(navController: NavController) {
     val energy by app.myspoti.power.EnergySettings.state.collectAsStateWithLifecycle()
     val ctx = androidx.compose.ui.platform.LocalContext.current
+    var pendingDiagnosticFile by remember { mutableStateOf<java.io.File?>(null) }
+    val saveDiagnostic = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { destination ->
+        val source = pendingDiagnosticFile
+        pendingDiagnosticFile = null
+        if (destination != null && source != null) {
+            val saved = runCatching {
+                ctx.contentResolver.openOutputStream(destination)?.use { output ->
+                    source.inputStream().use { input -> input.copyTo(output) }
+                } ?: error("no output stream")
+            }.isSuccess
+            android.widget.Toast.makeText(
+                ctx,
+                if (saved) "Diagnostic report saved" else ctx.getString(R.string.diagnostic_export_failed),
+                android.widget.Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
     Column(Modifier.fillMaxSize().background(AppBackground).statusBarsPadding()) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(4.dp)) {
             IconButton(onClick = { navController.popBackStack() }) {
@@ -206,7 +225,10 @@ fun SettingsScreen(navController: NavController) {
             Column(
                 Modifier.fillMaxWidth().clickable {
                     val file = runCatching { app.myspoti.host.android.Logbook.export(ctx) }.getOrNull()
-                    if (file != null) shareDiagnosticReport(ctx, file)
+                    if (file != null) {
+                        pendingDiagnosticFile = file
+                        saveDiagnostic.launch(file.name)
+                    }
                     else android.widget.Toast.makeText(ctx, ctx.getString(R.string.diagnostic_export_failed), android.widget.Toast.LENGTH_SHORT).show()
                 }.padding(horizontal = 20.dp, vertical = 10.dp),
             ) {
