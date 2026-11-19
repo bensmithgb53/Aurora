@@ -33,9 +33,10 @@ object Logbook {
      * and `adb logcat -s Myspoti` show the same thing. Safe from any thread.
      */
     fun log(line: String) {
-        android.util.Log.d(WebPlayerHost.LOG, line)
+        val safe = redact(line)
+        android.util.Log.d(WebPlayerHost.LOG, safe)
         synchronized(lines) {
-            lines.addLast("${stamp.format(Date())} $line")
+            lines.addLast("${stamp.format(Date())} $safe")
             while (lines.size > MAX_LINES) lines.removeFirst()
         }
     }
@@ -63,7 +64,11 @@ object Logbook {
         val versionCode = info?.let { androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(it) } ?: 0L
         // The player's page URL tells which Spotify screen the app was on; read only when the
         // runtime started, or the not-yet-initialized host would crash the export.
-        val pageUrl = if (MyspotiRuntime.isStarted) runCatching { MyspotiRuntime.host.url.value }.getOrNull() else null
+        // Never export query parameters/fragments: login callbacks and access codes can appear
+        // there even when the page itself is otherwise safe to report.
+        val pageUrl = if (MyspotiRuntime.isStarted) runCatching {
+            MyspotiRuntime.host.url.value.substringBefore('?').substringBefore('#')
+        }.getOrNull() else null
         val tail = recent()
         return buildString {
             appendLine("Myspoti diagnostic report")
@@ -77,4 +82,9 @@ object Logbook {
             appendLine(tail)
         }
     }
+
+    /** Removes credentials and account/session identifiers before anything reaches disk/logcat. */
+    private fun redact(value: String): String = value
+        .replace(Regex("(?i)(bearer\\s+)[A-Za-z0-9._~+/=-]+"), "$1[REDACTED]")
+        .replace(Regex("(?i)(\\\"?(?:access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|authorization|cookie|session[_-]?id|user[_-]?id|email|username|code)\\\"?\\s*[:=]\\s*\\\"?)[^\\\"&,\\s}]+"), "$1[REDACTED]")
 }

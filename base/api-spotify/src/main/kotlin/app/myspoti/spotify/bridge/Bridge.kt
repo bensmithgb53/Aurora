@@ -59,7 +59,19 @@ class Bridge(private val host: BridgeHost, scope: CoroutineScope) {
                 log("page state: " + (s?.get("track") as? JsonObject)?.get("name") + " paused=" + s?.get("isPaused") + " buffering=" + s?.get("isBuffering"))
             } else if (type == "result") {
                 // Results are logged by call(); never write their values (tokens) here.
-            } else if (type != "queue") log("page $type: " + raw.take(300))
+            } else if (type == "refused") {
+                log("playback refused status=${field("status")?.contentOrNull ?: "?"} " +
+                    "error=${field("error")?.contentOrNull ?: "?"} late=${field("late")?.contentOrNull ?: "?"}")
+            } else if (type == "device") {
+                log("playback device ready=${field("ready")?.contentOrNull ?: "?"} " +
+                    "claimed=${field("claimed")?.contentOrNull ?: "?"}")
+            } else if (type == "drm") {
+                log("Widevine probe supported=${field("supported")?.contentOrNull ?: "?"} " +
+                    "missing=${field("missing")?.contentOrNull ?: "?"} " +
+                    "error=${field("error")?.contentOrNull ?: "?"}")
+            } else if (type == "error") {
+                log("page error=${field("error")?.contentOrNull ?: field("message")?.contentOrNull ?: "?"}")
+            } else if (type != "queue") log("page event=$type")
         }
         when (type) {
             "ready" -> { gone = false; _ready.value = true }
@@ -123,7 +135,7 @@ class Bridge(private val host: BridgeHost, scope: CoroutineScope) {
         pending[id] = waiter
         try {
             val started = System.currentTimeMillis()
-            if (!quiet) logger?.invoke("call #$id $method ${args.toString().take(200)}")
+            if (!quiet) logger?.invoke("call #$id $method")
             host.evaluate("window.Myspoti && window.Myspoti.call($id, ${json.encodeToString(JsonElement.serializer(), kotlinx.serialization.json.JsonPrimitive(method))}, $args).catch(() => {})")
             return try {
                 // withTimeoutOrNull, not withTimeout: a timeout must surface as a
@@ -134,12 +146,13 @@ class Bridge(private val host: BridgeHost, scope: CoroutineScope) {
                     ?: throw BridgeException("timeout after $timeoutMs ms: $method")
                 result.also {
                     if (quiet) return@also
-                    val shown = if (method == "token.get") "(token hidden)" else it.toString().take(200)
-                    logger?.invoke("call #$id $method ok in ${System.currentTimeMillis() - started} ms: $shown")
+                    // Never log result values: profile data, IDs, playlist data, and tokens can
+                    // all be returned by a successful bridge call.
+                    logger?.invoke("call #$id $method ok in ${System.currentTimeMillis() - started} ms")
                 }
             } catch (e: Exception) {
                 if (e is BridgeException && e.message?.startsWith("timeout") == true) lastTimeoutAt = System.currentTimeMillis()
-                logger?.invoke("call #$id $method${if (quiet) " " + args.toString().take(100) else ""} FAILED after ${System.currentTimeMillis() - started} ms: ${e.message}")
+                logger?.invoke("call #$id $method FAILED after ${System.currentTimeMillis() - started} ms")
                 throw e
             }
         } finally {
