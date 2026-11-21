@@ -431,23 +431,27 @@ class Api constructor(
         val cached = if (ytmHome) null else if (facet.isEmpty()) HomeCache.home ?: diskHome() else HomeCache.facets[facet]
         cached?.let { emit(Response.Success(it)) } ?: emit(Response.Loading())
         if (ytmHome) {
-            runCatching { YtmRuntime.account.home() }.fold(
-                onSuccess = { shelves ->
-                    val model = HomeFeedModel(
-                        sections = shelves.mapNotNull { shelf ->
-                            val items = shelf.items.mapNotNull(::ytmHomeItem)
-                                .distinctBy { it::class.simpleName + "|" + it.name.lowercase() }
-                            if (items.isEmpty()) null else HomeSection(shelf.title, items)
-                        }.distinctBy { it.title.lowercase().ifBlank { it.hashCode().toString() } },
-                    )
-                    emit(Response.Success(model))
-                },
-                onFailure = { e ->
-                    Log.e("Api", "get YTM Home failed", e)
-                    emit(Response.Error(e.message ?: "YouTube Music Home unavailable"))
-                },
-            )
-            return@flow
+            val ytm = runCatching { YtmRuntime.account.home() }
+            val ytmModel = ytm.getOrNull()?.let { shelves ->
+                HomeFeedModel(
+                    sections = shelves.mapNotNull { shelf ->
+                        val items = shelf.items.mapNotNull(::ytmHomeItem)
+                            .distinctBy { it::class.simpleName + "|" + it.name.lowercase() }
+                        if (items.isEmpty()) null else HomeSection(shelf.title, items)
+                    }.distinctBy { it.title.lowercase().ifBlank { it.hashCode().toString() } },
+                )
+            }
+            // Prefer the Spotify API for the UI/catalog feed when its Web Player session is ready.
+            // YTM remains the fallback, so a user signed into only YouTube Music still gets Home.
+            if (ready()) {
+                Log.d("Api", "using Spotify Home API while YouTube Music supplies the account source")
+            } else if (!ytmModel?.sections.isNullOrEmpty()) {
+                emit(Response.Success(ytmModel!!))
+                return@flow
+            }
+            if (ytmModel?.sections.isNullOrEmpty()) {
+                ytm.exceptionOrNull()?.let { Log.w("Api", "YTM Home unavailable; trying Spotify Home", it) }
+            }
         }
         if (!ready()) { if (cached == null) emit(Response.Error(notSignedIn())); return@flow }
         // Any facet Spotify offers: a top chip, or one opened beside it (Music > Following).
