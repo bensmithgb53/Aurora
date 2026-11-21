@@ -39,6 +39,9 @@ class YtmAccount(
     /** Reads the session's cookies again: true when an account is signed in. */
     suspend fun refreshSignIn(): Boolean = Ytm.signedIn(cookies.header(Ytm.ORIGIN)).also { _signedIn.value = it }
 
+    /** Reads the signed-in Home shelves from the YouTube Music browse endpoint. */
+    suspend fun home(): List<YtmParse.HomeShelf> = YtmParse.home(api.browse("FEmusic_home"))
+
     /** Loads the web app's home in the hidden page (nothing plays there). */
     suspend fun open() = host.navigate(Ytm.HOME_URL)
 

@@ -17,6 +17,7 @@ import app.myspoti.api.Track
 import app.myspoti.api.best
 import app.myspoti.engine.R
 import app.myspoti.host.android.MyspotiRuntime
+import app.myspoti.ytmusic.YtmParse
 import com.music.spotui.data.entity.AlbumsModel
 import com.music.spotui.data.entity.ArtistOverviewModel
 import com.music.spotui.data.entity.ArtistTrackUi
@@ -34,6 +35,7 @@ import com.music.spotui.data.local.LocalFileMatch
 import com.music.spotui.data.local.LocalMusic
 import com.music.spotui.di.Graph
 import com.music.spotui.di.SongPlayer
+import com.music.spotui.di.YtmRuntime
 import kotlinx.coroutines.async
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.coroutineScope
@@ -292,6 +294,25 @@ class Api constructor(
         }
     }
 
+    private fun ytmHomeItem(item: YtmParse.Item): HomeItem? = when (item) {
+        is YtmParse.Item.AlbumItem -> HomeItem.Album(
+            id = item.album.uri, name = item.album.name, imageUrl = cover(item.album.images),
+            subtitle = item.album.type.ifBlank { context.getString(R.string.lbl_type_album) },
+            artists = item.album.artists.joinToString(", ") { it.name },
+        )
+        is YtmParse.Item.ArtistItem -> HomeItem.Artist(
+            name = item.artist.name, imageUrl = cover(item.artist.images), id = item.artist.uri,
+        )
+        is YtmParse.Item.PlaylistItem -> HomeItem.Playlist(
+            name = item.playlist.name, imageUrl = cover(item.playlist.images),
+            subtitle = item.playlist.owner?.let { context.getString(R.string.lbl_playlist) + " • " + it }
+                ?: context.getString(R.string.lbl_playlist), id = item.playlist.uri,
+        )
+        // Songs remain available through search and the catalog/audio-source path; the current
+        // Home UI has no standalone song tile, so do not create a non-clickable card for one.
+        is YtmParse.Item.Song -> null
+    }
+
     private fun likedEntry() = LibraryEntry(
         spotifyId = LIKED_SONGS_ID,
         name = context.getString(R.string.lbl_liked_songs),
@@ -406,8 +427,28 @@ class Api constructor(
 
     /** [facet]: "" (all), "music-chip", "podcasts-chip", "audiobooks-chip", or a sub-chip Spotify sent (HomeSubChips). */
     suspend fun getHomeFeed(facet: String = ""): Flow<Response<HomeFeedModel>> = flow {
-        val cached = if (facet.isEmpty()) HomeCache.home ?: diskHome() else HomeCache.facets[facet]
+        val ytmHome = facet.isEmpty() && YtmRuntime.chosen && YtmRuntime.signedIn
+        val cached = if (ytmHome) null else if (facet.isEmpty()) HomeCache.home ?: diskHome() else HomeCache.facets[facet]
         cached?.let { emit(Response.Success(it)) } ?: emit(Response.Loading())
+        if (ytmHome) {
+            runCatching { YtmRuntime.account.home() }.fold(
+                onSuccess = { shelves ->
+                    val model = HomeFeedModel(
+                        sections = shelves.mapNotNull { shelf ->
+                            val items = shelf.items.mapNotNull(::ytmHomeItem)
+                                .distinctBy { it::class.simpleName + "|" + it.name.lowercase() }
+                            if (items.isEmpty()) null else HomeSection(shelf.title, items)
+                        }.distinctBy { it.title.lowercase().ifBlank { it.hashCode().toString() } },
+                    )
+                    emit(Response.Success(model))
+                },
+                onFailure = { e ->
+                    Log.e("Api", "get YTM Home failed", e)
+                    emit(Response.Error(e.message ?: "YouTube Music Home unavailable"))
+                },
+            )
+            return@flow
+        }
         if (!ready()) { if (cached == null) emit(Response.Error(notSignedIn())); return@flow }
         // Any facet Spotify offers: a top chip, or one opened beside it (Music > Following).
         runCatching { api.home.feed(facet, itemsPerShelf = 20) }.fold(

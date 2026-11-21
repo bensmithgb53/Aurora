@@ -29,6 +29,9 @@ object YtmParse {
         data class PlaylistItem(val playlist: Playlist) : Item
     }
 
+    /** One titled shelf from YouTube Music's personalized Home browse response. */
+    data class HomeShelf(val title: String, val items: List<Item>)
+
     // ── JSON helpers ──
 
     private fun JsonElement?.o(): JsonObject? = this as? JsonObject
@@ -191,6 +194,27 @@ object YtmParse {
 
     /** Every card of an answer (grids and carousels), in order. */
     fun cards(answer: JsonElement): List<Item> = deep(answer, "musicTwoRowItemRenderer").mapNotNull(::twoRow)
+
+    /**
+     * Reads Home shelves without assuming a particular web-client layout. YouTube Music has used
+     * both musicShelfRenderer and musicCarouselShelfRenderer for Home over time; cards and rows
+     * are parsed by the same lenient routines used by search and library pages.
+     */
+    fun home(answer: JsonElement): List<HomeShelf> {
+        val containers = deep(answer, "musicShelfRenderer") + deep(answer, "musicCarouselShelfRenderer")
+        val seenContainers = java.util.IdentityHashMap<JsonObject, Boolean>()
+        return containers.mapNotNull { container ->
+            if (seenContainers.put(container, true) != null) return@mapNotNull null
+            val title = text(container.o("title"))
+                ?: deep(container, "musicCarouselShelfBasicHeaderRenderer").firstNotNullOfOrNull { text(it.o("title")) }
+                ?: deep(container, "musicShelfHeaderRenderer").firstNotNullOfOrNull { text(it.o("title")) }
+                ?: ""
+            val items = (deep(container, "musicResponsiveListItemRenderer").mapNotNull(::row) +
+                deep(container, "musicTwoRowItemRenderer").mapNotNull(::twoRow))
+                .distinctBy(::key)
+            if (items.isEmpty()) null else HomeShelf(title, items)
+        }
+    }
 
     /** The token of the answer's next page, when there is one. */
     fun continuation(answer: JsonElement): String? =
